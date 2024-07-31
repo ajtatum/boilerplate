@@ -1,0 +1,14 @@
+- name: Update and upgrade servers
+  hosts: all
+  become: yes
+#  vars_files:
+#    - secrets.yml
+  tasks:
+    - name: Update apt repository cache
+      apt:
+        update_cache: yes
+
+    - name: Upgrade all packages
+      apt:
+        upgrade: dist
+        autoremove: yes

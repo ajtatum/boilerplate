@@ -1,0 +1,109 @@
+---
+- name: Install Docker, Docker Compose, and Portainer
+  hosts: docker
+  become: yes
+  tasks:
+    - name: Check if Docker is installed
+      become: yes
+      command: docker -v
+      register: docker_installed
+      ignore_errors: true
+
+    - name: Update APT package index
+      apt:
+        update_cache: yes
+
+    - name: Install prerequisites
+      apt:
+        name:
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - software-properties-common
+        state: present
+
+    - name: Add Docker's official GPG key
+      shell: |
+        mkdir -p /etc/apt/keyrings &&
+        curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+      args:
+        creates: /etc/apt/keyrings/docker.gpg
+
+    - name: Create Docker APT source list
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/docker.list
+        content: |
+          deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable
+
+    - name: Update APT package index again
+      apt:
+        update_cache: yes
+
+    - name: Install Docker packages
+      become: yes
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: latest
+        update_cache: yes
+      when: docker_installed.failed
+
+    - name: Fetch the latest Docker Compose version
+      uri:
+        url: https://api.github.com/repos/docker/compose/releases/latest
+        return_content: yes
+      register: docker_compose_version
+
+    - name: Extract Docker Compose version number
+      set_fact:
+        docker_compose_version_number: "{{ docker_compose_version.json.tag_name }}"
+
+    - name: Download Docker Compose based on version number
+      become: yes
+      get_url:
+        url: https://github.com/docker/compose/releases/download/{{ docker_compose_version_number }}/docker-compose-Linux-x86_64
+        dest: /usr/bin/docker-compose
+        mode: '0755'
+
+    - name: Ensure Docker service is enabled and started
+      systemd:
+        name: docker
+        enabled: yes
+        state: started
+
+    - name: Ensure Docker group exists
+      become: yes
+      ansible.builtin.group:
+        name: docker
+        state: present
+      register: docker_group
+
+    - name: Add User to docker group
+      become: yes
+      ansible.builtin.user:
+        name: ajtatum
+        groups: docker
+        append: true
+      when: docker_group is changed
+
+    - name: Create Portainer data volume
+      docker_volume:
+        name: portainer_data
+        state: present
+
+    - name: Run Portainer container
+      docker_container:
+        name: portainer
+        image: portainer/portainer-ce
+        ports:
+          - "8000:8000"
+          - "9000:9000"
+        volumes:
+          - portainer_data:/data
+          - /var/run/docker.sock:/var/run/docker.sock
+        restart_policy: always
+        state: started
